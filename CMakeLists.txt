@@ -2,26 +2,38 @@ cmake_minimum_required(VERSION 3.10.2)
 
 # Apple: Must be set before enable_language() or project() as it may influence configuration of the toolchain and flags.
 
-project(hell_imgui)
+project(Distortion_brown_model)
 
 find_package(Vulkan REQUIRED)
 find_package(SDL2 REQUIRED)
-add_executable(hello_imgui
-        "${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui.h"
-        "${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui.cpp"
-        ${CMAKE_CURRENT_SOURCE_DIR}/imgui/examples/example_sdl_vulkan/main.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_demo.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_tables.cpp
-        "${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_draw.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_widgets.cpp"
 
-        "${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends/imgui_impl_vulkan.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends/imgui_impl_sdl.cpp"
+add_executable(Distortion_brown_model
+        main.cpp
         )
-target_link_libraries(hello_imgui PUBLIC
+target_link_libraries(Distortion_brown_model
+        PUBLIC
+        imgui
+        distortion-interfaces
+        )
+
+add_library(imgui STATIC
+        imgui/imgui.h
+        imgui/imgui.cpp
+        imgui/imgui_tables.cpp
+        imgui/imgui_draw.cpp
+        imgui/imgui_widgets.cpp
+        imgui/backends/imgui_impl_vulkan.cpp
+        imgui/backends/imgui_impl_sdl.cpp
+        )
+
+target_link_libraries(imgui
+        PUBLIC
         Vulkan::Vulkan
         ${SDL2_LIBRARIES})
-target_include_directories(hello_imgui PUBLIC
+target_include_directories(imgui
+        PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/imgui
         ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends
         ${SDL2_INCLUDE_DIRS})
+
+add_subdirectory(interface)
