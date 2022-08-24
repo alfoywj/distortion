@@ -4,8 +4,7 @@ cmake_minimum_required(VERSION 3.10.2)
 
 project(hell_imgui)
 
-find_package(Vulkan)
-find_package(VulkanHeaders)
+find_package(Vulkan REQUIRED)
 find_package(SDL2 REQUIRED)
 add_executable(hello_imgui
         "${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui.h"
