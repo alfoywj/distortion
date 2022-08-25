@@ -4,8 +4,7 @@ cmake_minimum_required(VERSION 3.10.2)
 
 project(Distortion_brown_model)
 
-find_package(Vulkan REQUIRED)
-find_package(SDL2 REQUIRED)
+add_subdirectory(src)
 
 add_executable(Distortion_brown_model
         main.cpp
@@ -16,24 +15,3 @@ target_link_libraries(Distortion_brown_model
         distortion-interfaces
         )
 
-add_library(imgui STATIC
-        imgui/imgui.h
-        imgui/imgui.cpp
-        imgui/imgui_tables.cpp
-        imgui/imgui_draw.cpp
-        imgui/imgui_widgets.cpp
-        imgui/backends/imgui_impl_vulkan.cpp
-        imgui/backends/imgui_impl_sdl.cpp
-        )
-
-target_link_libraries(imgui
-        PUBLIC
-        Vulkan::Vulkan
-        ${SDL2_LIBRARIES})
-target_include_directories(imgui
-        PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/imgui
-        ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends
-        ${SDL2_INCLUDE_DIRS})
-
-add_subdirectory(interface)
