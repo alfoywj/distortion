@@ -17,11 +17,13 @@
 #include <SDL.h>
 #include <SDL_vulkan.h>
 #include <vulkan/vulkan.h>
-#include "ote/ote_defines.h"
+#include <unistd.h>
+#include "usecase_interface.h"
+#include "render_interface.h"
 //#define IMGUI_UNLIMITED_FRAME_RATE
-#ifdef _DEBUG
+
 #define IMGUI_VULKAN_DEBUG_REPORT
-#endif
+
 
 static VkAllocationCallbacks*   g_Allocator = NULL;
 static VkInstance               g_Instance = VK_NULL_HANDLE;
@@ -250,73 +252,6 @@ static void CleanupVulkanWindow()
     ImGui_ImplVulkanH_DestroyWindow(g_Instance, g_Device, &g_MainWindowData, g_Allocator);
 }
 
-static void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data)
-{
-    VkResult err;
-
-    VkSemaphore image_acquired_semaphore  = wd->FrameSemaphores[wd->SemaphoreIndex].ImageAcquiredSemaphore;
-    VkSemaphore render_complete_semaphore = wd->FrameSemaphores[wd->SemaphoreIndex].RenderCompleteSemaphore;
-    err = vkAcquireNextImageKHR(g_Device, wd->Swapchain, UINT64_MAX, image_acquired_semaphore, VK_NULL_HANDLE, &wd->FrameIndex);
-    if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR)
-    {
-        g_SwapChainRebuild = true;
-        return;
-    }
-    check_vk_result(err);
-
-    ImGui_ImplVulkanH_Frame* fd = &wd->Frames[wd->FrameIndex];
-    {
-        err = vkWaitForFences(g_Device, 1, &fd->Fence, VK_TRUE, UINT64_MAX);    // wait indefinitely instead of periodically checking
-        check_vk_result(err);
-
-        err = vkResetFences(g_Device, 1, &fd->Fence);
-        check_vk_result(err);
-    }
-    {
-        err = vkResetCommandPool(g_Device, fd->CommandPool, 0);
-        check_vk_result(err);
-        VkCommandBufferBeginInfo info = {};
-        info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        info.flags |= VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        err = vkBeginCommandBuffer(fd->CommandBuffer, &info);
-        check_vk_result(err);
-    }
-    {
-        VkRenderPassBeginInfo info = {};
-        info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        info.renderPass = wd->RenderPass;
-        info.framebuffer = fd->Framebuffer;
-        info.renderArea.extent.width = wd->Width;
-        info.renderArea.extent.height = wd->Height;
-        info.clearValueCount = 1;
-        info.pClearValues = &wd->ClearValue;
-        vkCmdBeginRenderPass(fd->CommandBuffer, &info, VK_SUBPASS_CONTENTS_INLINE);
-    }
-
-    // Record dear imgui primitives into command buffer
-    ImGui_ImplVulkan_RenderDrawData(draw_data, fd->CommandBuffer);
-
-    // Submit command buffer
-    vkCmdEndRenderPass(fd->CommandBuffer);
-    {
-        VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        VkSubmitInfo info = {};
-        info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        info.waitSemaphoreCount = 1;
-        info.pWaitSemaphores = &image_acquired_semaphore;
-        info.pWaitDstStageMask = &wait_stage;
-        info.commandBufferCount = 1;
-        info.pCommandBuffers = &fd->CommandBuffer;
-        info.signalSemaphoreCount = 1;
-        info.pSignalSemaphores = &render_complete_semaphore;
-
-        err = vkEndCommandBuffer(fd->CommandBuffer);
-        check_vk_result(err);
-        err = vkQueueSubmit(g_Queue, 1, &info, fd->Fence);
-        check_vk_result(err);
-    }
-}
-
 static void FramePresent(ImGui_ImplVulkanH_Window* wd)
 {
     if (g_SwapChainRebuild)
@@ -452,9 +387,22 @@ int main(int, char**)
     // Our state
     bool show_demo_window = true;
     bool show_another_window = false;
-    ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+    ImVec4 clear_color = ImVec4(0.05f, 0.0f, 0.00f, 1.00f);
     ote_radial radial{0,};
     radial.K[0] = 1.0;
+    distortion_data_render distortionDataRender;
+
+    VkBundle* vk = new VkBundle(g_Device, g_Queue, g_QueueFamily, g_PhysicalDevice);
+
+    render_shader mesh_shader;
+    render_pipeline mesh_pipeline;
+    load_mesh_shader(vk, &mesh_shader);
+    load_mesh_pipeline(vk, &mesh_pipeline, &mesh_shader, &wd->RenderPass);
+
+    create_distortion_data_render(vk, &distortionDataRender, 32, 32);
+    //update_data
+    //upload_data
+
     // Main loop
     bool done = false;
     while (!done)
@@ -473,6 +421,8 @@ int main(int, char**)
             if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE && event.window.windowID == SDL_GetWindowID(window))
                 done = true;
         }
+
+        update_distortion_data_render(vk, radial, &distortionDataRender);
 
         // Resize swap chain?
         if (g_SwapChainRebuild)
@@ -499,13 +449,13 @@ int main(int, char**)
             static int counter = 0;
 
             ImGui::Begin("Brown model");
-            ImGui::SliderFloat("K0", &radial.K[0], 0.0f, 1.0f);
-            ImGui::SliderFloat("K1", &radial.K[1], 0.0f, 1.0f);
-            ImGui::SliderFloat("K2", &radial.K[2], 0.0f, 1.0f);
-            ImGui::SliderFloat("K3", &radial.K[3], 0.0f, 1.0f);
-            ImGui::SliderFloat("K4", &radial.K[4], 0.0f, 1.0f);
-            ImGui::SliderFloat("K5", &radial.K[5], 0.0f, 1.0f);
-            ImGui::SliderFloat("K6", &radial.K[6], 0.0f, 1.0f);
+            ImGui::SliderFloat("K0", &radial.K[0], -1.0f, 1.0f);
+            ImGui::SliderFloat("K1", &radial.K[1], -1.0f, 1.0f);
+            ImGui::SliderFloat("K2", &radial.K[2], -1.0f, 1.0f);
+            ImGui::SliderFloat("K3", &radial.K[3], -1.0f, 1.0f);
+            ImGui::SliderFloat("K4", &radial.K[4], -1.0f, 1.0f);
+            ImGui::SliderFloat("K5", &radial.K[5], -1.0f, 1.0f);
+            ImGui::SliderFloat("K6", &radial.K[6], -1.0f, 1.0f);
 
             ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
 
@@ -538,9 +488,85 @@ int main(int, char**)
             wd->ClearValue.color.float32[1] = clear_color.y * clear_color.w;
             wd->ClearValue.color.float32[2] = clear_color.z * clear_color.w;
             wd->ClearValue.color.float32[3] = clear_color.w;
-            FrameRender(wd, draw_data);
+            {
+                VkResult err;
+
+                VkSemaphore image_acquired_semaphore  = wd->FrameSemaphores[wd->SemaphoreIndex].ImageAcquiredSemaphore;
+                VkSemaphore render_complete_semaphore = wd->FrameSemaphores[wd->SemaphoreIndex].RenderCompleteSemaphore;
+                err = vkAcquireNextImageKHR(g_Device, wd->Swapchain, UINT64_MAX, image_acquired_semaphore, VK_NULL_HANDLE, &wd->FrameIndex);
+                if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR)
+                {
+                    g_SwapChainRebuild = true;
+                    continue;
+                }
+                check_vk_result(err);
+
+                ImGui_ImplVulkanH_Frame* fd = &wd->Frames[wd->FrameIndex];
+                {
+                    err = vkWaitForFences(g_Device, 1, &fd->Fence, VK_TRUE, UINT64_MAX);    // wait indefinitely instead of periodically checking
+                    check_vk_result(err);
+
+                    err = vkResetFences(g_Device, 1, &fd->Fence);
+                    check_vk_result(err);
+                }
+                {
+                    err = vkResetCommandPool(g_Device, fd->CommandPool, 0);
+                    check_vk_result(err);
+                    VkCommandBufferBeginInfo info = {};
+                    info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+                    info.flags |= VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+                    err = vkBeginCommandBuffer(fd->CommandBuffer, &info);
+                    check_vk_result(err);
+                }
+                {
+                    VkRenderPassBeginInfo info = {};
+                    info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                    info.renderPass = wd->RenderPass;
+                    info.framebuffer = fd->Framebuffer;
+                    info.renderArea.extent.width = wd->Width;
+                    info.renderArea.extent.height = wd->Height;
+                    info.clearValueCount = 1;
+                    info.pClearValues = &wd->ClearValue;
+                    vkCmdBeginRenderPass(fd->CommandBuffer, &info, VK_SUBPASS_CONTENTS_INLINE);
+                }
+
+                vkCmdBindPipeline(fd->CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_pipeline.pipeline);
+                int width, height;
+                SDL_GetWindowSize(window, &width, &height);
+                VkRect2D scissor {0,0,static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
+                VkViewport viewport {0,0,static_cast<float>(width),static_cast<float>(height),0,1.0f};
+                vkCmdSetScissor(fd->CommandBuffer, 0, 1, &scissor);
+                vkCmdSetViewport(fd->CommandBuffer, 0, 1,&viewport);
+                VkDeviceSize offset{0};
+                vkCmdBindVertexBuffers(fd->CommandBuffer, 0, 1, &distortionDataRender.renderMesh.vertexBuffer.buffer,&offset);
+                vkCmdBindIndexBuffer(fd->CommandBuffer, distortionDataRender.renderMesh.indexBuffer.buffer, offset, VK_INDEX_TYPE_UINT32);
+                vkCmdDrawIndexed(fd->CommandBuffer, distortionDataRender.oteGridMesh.dataMesh.index_count, 1, 0, 0, 0);
+                // Record dear imgui primitives into command buffer
+                ImGui_ImplVulkan_RenderDrawData(draw_data, fd->CommandBuffer);
+
+                // Submit command buffer
+                vkCmdEndRenderPass(fd->CommandBuffer);
+                {
+                    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+                    VkSubmitInfo info = {};
+                    info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+                    info.waitSemaphoreCount = 1;
+                    info.pWaitSemaphores = &image_acquired_semaphore;
+                    info.pWaitDstStageMask = &wait_stage;
+                    info.commandBufferCount = 1;
+                    info.pCommandBuffers = &fd->CommandBuffer;
+                    info.signalSemaphoreCount = 1;
+                    info.pSignalSemaphores = &render_complete_semaphore;
+
+                    err = vkEndCommandBuffer(fd->CommandBuffer);
+                    check_vk_result(err);
+                    err = vkQueueSubmit(g_Queue, 1, &info, fd->Fence);
+                    check_vk_result(err);
+                }
+            }
             FramePresent(wd);
         }
+        usleep(6000);
     }
 
     // Cleanup
